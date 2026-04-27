@@ -98,8 +98,10 @@ def npu_rms_norm_forward(self, hidden_states):
 def npu_gated_rms_norm_forward(self, hidden_states, gate=None):
     """NPU forward implementation for Gated RMSNorm with high-precision FP32 computation.
 
-    This function is optimized for Qwen3.5's hybrid attention mechanism, performing
-    RMSNorm and gated SiLU multiplication in FP32 for numerical stability.
+    This function performs RMSNorm and gated SiLU multiplication in FP32 for numerical
+    stability. Unlike standard RMSNorm, Gated RMSNorm in Qwen3.5 uses standard
+    parameterization (``scale = weight`` where weight is initialized to 1), so the
+    residual weight adjustment (``1.0 + weight``) is not applied here.
 
     Args:
         self (nn.Module): The Gated RMSNorm module instance.
@@ -113,12 +115,7 @@ def npu_gated_rms_norm_forward(self, hidden_states, gate=None):
     hidden_states = hidden_states.to(torch.float32)
     _eps = getattr(self, "variance_epsilon", None) or getattr(self, "eps", 1e-6)
 
-    if _should_use_residual_rmsnorm(self):
-        effective_weight = 1.0 + self.weight.float()
-    else:
-        effective_weight = self.weight.float()
-
-    hidden_states = torch_npu.npu_rms_norm(hidden_states, effective_weight, epsilon=_eps)[0]
+    hidden_states = torch_npu.npu_rms_norm(hidden_states, self.weight.float(), epsilon=_eps)[0]
 
     if gate is not None:
         hidden_states = hidden_states * F.silu(gate.to(torch.float32))
