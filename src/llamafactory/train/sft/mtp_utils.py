@@ -57,7 +57,14 @@ def get_base_lm_model(model: torch.nn.Module) -> torch.nn.Module:
     return getattr(base, "language_model", base)
 
 
-def compute_mtp_loss_tf(
+def _is_mrope_config(config: Any) -> bool:
+    r"""Detect whether a model uses Multimodal RoPE (e.g. Qwen3.5)."""
+    text_config = config.get_text_config() if hasattr(config, "get_text_config") else config
+    rope_params = getattr(text_config, "rope_parameters", None)
+    return isinstance(rope_params, dict) and "mrope_section" in rope_params
+
+
+def compute_mtp_loss(
     mtp_model: MtpModel,
     input_ids: torch.Tensor,
     main_hidden_states: torch.Tensor,
@@ -68,13 +75,21 @@ def compute_mtp_loss_tf(
 
     Layer i consumes the embedding of token ``t+i+1`` and the previous hidden
     state at position ``t`` to predict token ``t+i+2``.
+
+    This function works for both standard 2D RoPE models (Deepseek-V3,
+    GLM-4-MoE) and MRoPE models (Qwen3.5).
     """
     batch_size, seq_len = main_hidden_states.shape[:2]
     device = main_hidden_states.device
 
     base_embeds = mtp_model.embed_tokens(input_ids)
-    pos = torch.arange(seq_len, device=device).view(1, 1, -1)
-    base_position_ids = pos.expand(4, batch_size, -1).clone()
+    pos = torch.arange(seq_len, device=device)
+    if _is_mrope_config(mtp_model.config):
+        # MRoPE: [4, batch_size, seq_len] where the first component is text positions
+        base_position_ids = pos.view(1, 1, -1).expand(4, batch_size, -1).clone()
+    else:
+        # Standard RoPE: [batch_size, seq_len]
+        base_position_ids = pos.unsqueeze(0).expand(batch_size, -1).clone()
 
     total_loss = torch.tensor(0.0, device=device, dtype=torch.float32)
     current_hidden = main_hidden_states
@@ -87,8 +102,16 @@ def compute_mtp_loss_tf(
         shifted_position_ids = torch.roll(base_position_ids, -shift, dims=-1).clone()
         shifted_position_ids[..., -shift:] = base_position_ids[..., -shift:]
 
-        # Qwen3.5 rotary_emb expects mrope (3D) for temporal/height/width.
-        position_embeddings = mtp_model.rotary_emb(shifted_embeds, position_ids=shifted_position_ids[1:])
+        # Split position ids: text positions go to the causal mask, rope positions
+        # go to the rotary embedding. For 2D RoPE these are the same tensor.
+        if shifted_position_ids.ndim == 2:
+            text_position_ids = shifted_position_ids
+            rope_position_ids = shifted_position_ids
+        else:
+            text_position_ids = shifted_position_ids[0]
+            rope_position_ids = shifted_position_ids[1:]
+
+        position_embeddings = mtp_model.rotary_emb(shifted_embeds, position_ids=rope_position_ids)
 
         # Only shift 2D attention masks; for 4D or None fall back to a pure causal mask.
         # Labels are -100 for padded positions so the loss ignores them.
@@ -103,7 +126,7 @@ def compute_mtp_loss_tf(
             inputs_embeds=shifted_embeds,
             attention_mask=shifted_attention_mask,
             past_key_values=None,
-            position_ids=shifted_position_ids[0],
+            position_ids=text_position_ids,
         )
 
         current_hidden = mtp_model.layers[i](
@@ -111,7 +134,7 @@ def compute_mtp_loss_tf(
             previous_hidden_state=current_hidden,
             position_embeddings=position_embeddings,
             attention_mask=causal_mask,
-            position_ids=shifted_position_ids[0],
+            position_ids=text_position_ids,
             past_key_values=None,
         )
 

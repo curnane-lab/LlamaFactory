@@ -32,7 +32,7 @@ from ...extras.constants import IGNORE_INDEX
 from ..callbacks import SaveProcessorCallback
 from ..fp8_utils import configure_fp8_environment, patch_accelerator_for_fp8, verify_fp8_status
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler
-from .mtp_utils import MtpHiddenStateHook, compute_mtp_loss_tf, extend_layer_types, get_base_lm_model
+from .mtp_utils import MtpHiddenStateHook, compute_mtp_loss, extend_layer_types, get_base_lm_model
 
 
 if TYPE_CHECKING:
@@ -190,7 +190,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
                 unwrapped_model = self.accelerator.unwrap_model(model)
                 mtp_model = getattr(unwrapped_model, "mtp", None)
                 if mtp_model is not None:
-                    mtp_loss = compute_mtp_loss_tf(
+                    mtp_loss = compute_mtp_loss(
                         mtp_model,
                         input_ids=inputs["input_ids"],
                         main_hidden_states=hidden,
