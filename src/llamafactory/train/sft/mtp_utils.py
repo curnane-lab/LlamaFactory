@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 from transformers.masking_utils import create_causal_mask
 
 
@@ -104,16 +103,18 @@ def compute_mtp_loss(
         # Standard RoPE: [batch_size, seq_len]
         base_position_ids = pos.unsqueeze(0).expand(batch_size, -1).clone()
 
-    total_loss = torch.tensor(0.0, device=device, dtype=torch.float32)
+    total_loss = 0.0
     current_hidden = main_hidden_states
 
     for i in range(len(mtp_model.layers)):
         shift = i + 1
-        shifted_embeds = base_embeds[:, shift:, :]
-        shifted_embeds = F.pad(shifted_embeds, (0, 0, 0, shift), value=0.0)
+        shifted_embeds = torch.zeros_like(base_embeds)
+        if shift < seq_len:
+            shifted_embeds[:, :-shift, :] = base_embeds[:, shift:, :]
 
-        shifted_position_ids = torch.roll(base_position_ids, -shift, dims=-1).clone()
-        shifted_position_ids[..., -shift:] = base_position_ids[..., -shift:]
+        shifted_position_ids = base_position_ids.clone()
+        if shift < seq_len:
+            shifted_position_ids[..., :-shift] = base_position_ids[..., shift:]
 
         # Split position ids: text positions go to the causal mask, rope positions
         # go to the rotary embedding. For 2D RoPE these are the same tensor.
@@ -129,8 +130,9 @@ def compute_mtp_loss(
         # Only shift 2D attention masks; for 4D or None fall back to a pure causal mask.
         # Labels are -100 for padded positions so the loss ignores them.
         if attention_mask is not None and attention_mask.dim() == 2:
-            shifted_attention_mask = attention_mask[:, shift:]
-            shifted_attention_mask = F.pad(shifted_attention_mask, (0, shift), value=0)
+            shifted_attention_mask = torch.zeros_like(attention_mask)
+            if shift < seq_len:
+                shifted_attention_mask[:, :-shift] = attention_mask[:, shift:]
         else:
             shifted_attention_mask = None
 
@@ -154,8 +156,9 @@ def compute_mtp_loss(
         mtp_logits = mtp_model.shared_head(current_hidden)
 
         target_shift = i + 2
-        shifted_labels = torch.roll(labels, -target_shift, dims=1).clone()
-        shifted_labels[:, -target_shift:] = -100
+        shifted_labels = torch.full_like(labels, -100)
+        if target_shift < seq_len:
+            shifted_labels[:, :-target_shift] = labels[:, target_shift:]
 
         layer_loss = mtp_model.loss_function(
             mtp_logits,

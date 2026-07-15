@@ -194,6 +194,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
         if self.mtp_hook is not None and "labels" in inputs:
             hidden = self.mtp_hook.hidden
+            self.mtp_hook.hidden = None
             if hidden is not None:
                 unwrapped_model = self.accelerator.unwrap_model(model)
                 mtp_model = getattr(unwrapped_model, "mtp", None)
@@ -245,10 +246,12 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
         unwrapped_model = self.accelerator.unwrap_model(self.model)
         mtp_model = getattr(unwrapped_model, "mtp", None)
-        if mtp_model is not None and self.is_world_process_zero():
-            mtp_dir = os.path.join(output_dir, "mtp")
-            mtp_model.save_pretrained(mtp_dir)
-            logger.info_rank0(f"Saved external MTP weights to {mtp_dir}")
+        if mtp_model is not None:
+            state_dict = self.accelerator.get_state_dict(mtp_model)
+            if self.is_world_process_zero():
+                mtp_dir = os.path.join(output_dir, "mtp")
+                mtp_model.save_pretrained(mtp_dir, state_dict=state_dict)
+                logger.info_rank0(f"Saved external MTP weights to {mtp_dir}")
 
     def save_predictions(
         self, dataset: "Dataset", predict_results: "PredictionOutput", skip_special_tokens: bool = True
