@@ -14,23 +14,23 @@
 
 from __future__ import annotations
 
-"""Non-intrusive Multi-Token Prediction (MTP) helpers for SFT.
-
-These utilities allow training MTP layers without modifying transformers model
-files. They are used by `CustomSeq2SeqTrainer` when `num_mtp_layers > 0`.
-"""
-
 from typing import Any
 
 import torch
 import torch.nn.functional as F
 from transformers.masking_utils import create_causal_mask
 
+
 try:
     from transformers.modeling_layers import MtpModel
 except ImportError as e:
     MtpModel = None  # type: ignore[misc,assignment]
     _MTP_IMPORT_ERROR = e
+
+
+# Non-intrusive Multi-Token Prediction (MTP) helpers for SFT.
+# These utilities allow training MTP layers without modifying transformers model
+# files. They are used by `CustomSeq2SeqTrainer` when `num_mtp_layers > 0`.
 
 
 def extend_layer_types(config: Any, num_mtp_layers: int) -> Any:
@@ -72,7 +72,7 @@ def _is_mrope_config(config: Any) -> bool:
 
 
 def compute_mtp_loss(
-    mtp_model: "MtpModel",
+    mtp_model: MtpModel,
     input_ids: torch.Tensor,
     main_hidden_states: torch.Tensor,
     labels: torch.Tensor,
