@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 import numpy as np
 import torch
 from transformers import Seq2SeqTrainer
-from transformers.modeling_layers import MtpModel
 from typing_extensions import override
 
 from ...extras import logging
@@ -116,6 +115,15 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         if finetuning_args.num_mtp_layers > 0:
             if finetuning_args.use_asft_loss:
                 raise ValueError("MTP training is currently incompatible with ASFT loss.")
+
+            try:
+                from transformers.modeling_layers import MtpModel
+            except ImportError as e:
+                raise ImportError(
+                    "MTP training requires a transformers version that provides "
+                    "`transformers.modeling_layers.MtpModel` (merged via huggingface/transformers#46229). "
+                    "Please install a compatible transformers build from source."
+                ) from e
 
             base_model_for_mtp = self.model.get_base_model() if hasattr(self.model, "get_base_model") else self.model
             extend_layer_types(base_model_for_mtp.config, finetuning_args.num_mtp_layers)

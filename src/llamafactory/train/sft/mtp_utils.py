@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 """Non-intrusive Multi-Token Prediction (MTP) helpers for SFT.
 
 These utilities allow training MTP layers without modifying transformers model
@@ -23,7 +25,12 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 from transformers.masking_utils import create_causal_mask
-from transformers.modeling_layers import MtpModel
+
+try:
+    from transformers.modeling_layers import MtpModel
+except ImportError as e:
+    MtpModel = None  # type: ignore[misc,assignment]
+    _MTP_IMPORT_ERROR = e
 
 
 def extend_layer_types(config: Any, num_mtp_layers: int) -> Any:
@@ -65,7 +72,7 @@ def _is_mrope_config(config: Any) -> bool:
 
 
 def compute_mtp_loss(
-    mtp_model: MtpModel,
+    mtp_model: "MtpModel",
     input_ids: torch.Tensor,
     main_hidden_states: torch.Tensor,
     labels: torch.Tensor,
@@ -79,6 +86,12 @@ def compute_mtp_loss(
     This function works for both standard 2D RoPE models (Deepseek-V3,
     GLM-4-MoE) and MRoPE models (Qwen3.5).
     """
+    if MtpModel is None:
+        raise ImportError(
+            "MTP training requires a transformers version that provides "
+            "`transformers.modeling_layers.MtpModel` (merged via huggingface/transformers#46229). "
+            "Please install a compatible transformers build from source."
+        ) from _MTP_IMPORT_ERROR
     batch_size, seq_len = main_hidden_states.shape[:2]
     device = main_hidden_states.device
 
